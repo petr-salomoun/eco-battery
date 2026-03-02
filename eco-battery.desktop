@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=eco-battery
+Comment=Smart battery charging based on grid demand
+Exec=eco-battery
+Icon=battery-good-charging
+Terminal=false
+Type=Application
+Categories=Utility;System;
+Keywords=battery;power;charging;energy;

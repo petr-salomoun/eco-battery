@@ -1,0 +1,47 @@
+#!/bin/bash
+set -e
+
+case "$1" in
+    configure)
+        # Add user to plugdev group if not already
+        if [ -n "$SUDO_USER" ]; then
+            usermod -aG plugdev "$SUDO_USER" 2>/dev/null || true
+        fi
+        
+        # Reload udev rules
+        if [ -x /bin/udevadm ]; then
+            udevadm control --reload-rules 2>/dev/null || true
+            udevadm trigger --subsystem-match=power_supply 2>/dev/null || true
+        fi
+        
+        # Try to set permissions immediately
+        for bat in /sys/class/power_supply/BAT*; do
+            if [ -d "$bat" ]; then
+                for threshold in charge_control_end_threshold charge_control_start_threshold; do
+                    if [ -f "$bat/$threshold" ]; then
+                        chgrp plugdev "$bat/$threshold" 2>/dev/null || true
+                        chmod g+w "$bat/$threshold" 2>/dev/null || true
+                    fi
+                done
+            fi
+        done
+        
+        echo ""
+        echo "════════════════════════════════════════════════════════"
+        echo "  eco-battery installed successfully!"
+        echo "════════════════════════════════════════════════════════"
+        echo ""
+        echo "  Important: You need to LOG OUT and LOG BACK IN"
+        echo "  for group permissions to take effect."
+        echo ""
+        echo "  After logging back in, eco-battery will start"
+        echo "  automatically. Or run manually with: eco-battery"
+        echo ""
+        echo "════════════════════════════════════════════════════════"
+        echo ""
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0

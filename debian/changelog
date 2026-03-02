@@ -1,0 +1,12 @@
+eco-battery (1.0.1-1) unstable; urgency=medium
+
+  * Renamed project from ecco-battery to eco-battery
+  * Fix settings persistence: config directory updated to ~/.config/eco-battery
+
+ -- Petr Salomoun <petr.salomoun@gmail.com>  Mon, 02 Mar 2026 12:00:00 +0100
+
+eco-battery (1.0.0-1) unstable; urgency=medium
+
+  * Initial release
+
+ -- Petr Salomoun <petr.salomoun@gmail.com>  Sat, 28 Feb 2026 12:00:00 +0100

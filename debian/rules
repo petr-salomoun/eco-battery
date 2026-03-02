@@ -1,0 +1,23 @@
+#!/usr/bin/make -f
+
+%:
+	dh $@
+
+override_dh_auto_install:
+	mkdir -p debian/eco-battery/usr/bin
+	mkdir -p debian/eco-battery/usr/share/eco-battery
+	mkdir -p debian/eco-battery/usr/share/applications
+	mkdir -p debian/eco-battery/etc/xdg/autostart
+	mkdir -p debian/eco-battery/lib/udev/rules.d
+	
+	# Install with explicit /usr/bin/python3 (not env)
+	sed '1s|^#!.*python3|#!/usr/bin/python3|' eco_battery.py > debian/eco-battery/usr/bin/eco-battery
+	chmod 755 debian/eco-battery/usr/bin/eco-battery
+	
+	install -m 644 data/curves.json debian/eco-battery/usr/share/eco-battery/curves.json
+	install -m 644 eco-battery.desktop debian/eco-battery/usr/share/applications/eco-battery.desktop
+	install -m 644 eco-battery-autostart.desktop debian/eco-battery/etc/xdg/autostart/eco-battery.desktop
+	install -m 644 99-eco-battery.rules debian/eco-battery/lib/udev/rules.d/99-eco-battery.rules
+
+override_dh_installinit:
+	# Skip init script installation

@@ -1,0 +1,19 @@
+Source: eco-battery
+Section: utils
+Priority: optional
+Maintainer: Petr Salomoun <petr.salomoun@gmail.com>
+Build-Depends: debhelper-compat (= 13), python3
+Standards-Version: 4.6.0
+Homepage: https://github.com/yourusername/eco-battery
+
+Package: eco-battery
+Architecture: all
+Depends: ${misc:Depends},
+ python3,
+ python3-gi,
+ gir1.2-gtk-3.0,
+ gir1.2-ayatanaappindicator3-0.1
+Description: Smart battery charging based on grid demand
+ eco-battery automatically adjusts ThinkPad battery charging
+ thresholds inversely to electricity grid demand patterns.
+ Charge more during off-peak, less during peak hours.
