@@ -86,70 +86,76 @@ def save_config(config):
 
 
 def get_battery_path():
-    """Find battery sysfs path."""
+    """Find battery sysfs path. Returns path or None."""
     for bat in ["BAT0", "BAT1"]:
         path = Path(f"/sys/class/power_supply/{bat}")
-        if (path / "charge_control_end_threshold").exists():
+        if (path / "charge_control_end_threshold").exists() or \
+           (path / "charge_stop_threshold").exists():
             return path
     return None
 
 
+def _threshold_file_pairs(bat):
+    """Return list of (stop_file, start_file_or_None) pairs for all interfaces on this battery."""
+    pairs = []
+    for stop_name, start_name in [
+        ("charge_control_end_threshold", "charge_control_start_threshold"),
+        ("charge_stop_threshold",        "charge_start_threshold"),
+    ]:
+        stop = bat / stop_name
+        if stop.exists():
+            start = bat / start_name
+            pairs.append((stop, start if start.exists() else None))
+    return pairs
+
+
 def set_charge_threshold(threshold):
-    """Set battery charge threshold."""
+    """Set battery charge threshold on all available interfaces. Returns (success, error_message)."""
     bat = get_battery_path()
     if not bat:
-        return False
-    
-    stop_file = bat / "charge_control_end_threshold"
-    start_file = bat / "charge_control_start_threshold"
-    
+        return False, "no battery path"
+
     def _write_sysfs(path, value):
         with open(path, 'w') as f:
             f.write(str(value))
 
-    try:
+    def _write_pair(writer, stop_file, start_file):
         new_start = max(threshold - 5, 0)
-        if start_file.exists():
-            # Must write start before end when lowering, to keep start < end at all times.
-            # When raising, write end first. Compare against current end to decide order.
+        if start_file:
             try:
                 current_end = int(stop_file.read_text().strip())
             except Exception:
                 current_end = 100
             if threshold < current_end:
                 # Lowering: decrease start first so it stays below the (not yet lowered) end
-                _write_sysfs(start_file, new_start)
-                _write_sysfs(stop_file, threshold)
+                writer(start_file, new_start)
+                writer(stop_file, threshold)
             else:
                 # Raising: increase end first so it stays above the (not yet raised) start
-                _write_sysfs(stop_file, threshold)
-                _write_sysfs(start_file, new_start)
+                writer(stop_file, threshold)
+                writer(start_file, new_start)
         else:
-            _write_sysfs(stop_file, threshold)
-        return True
-    except PermissionError:
-        import subprocess
-        def _pkexec_write(path, value):
-            subprocess.run(['pkexec', 'tee', str(path)],
-                           input=str(value).encode(), capture_output=True, check=True)
+            writer(stop_file, threshold)
+
+    errors = []
+    for stop_file, start_file in _threshold_file_pairs(bat):
         try:
-            new_start = max(threshold - 5, 0)
-            if start_file.exists():
-                try:
-                    current_end = int(stop_file.read_text().strip())
-                except Exception:
-                    current_end = 100
-                if threshold < current_end:
-                    _pkexec_write(start_file, new_start)
-                    _pkexec_write(stop_file, threshold)
-                else:
-                    _pkexec_write(stop_file, threshold)
-                    _pkexec_write(start_file, new_start)
-            else:
-                _pkexec_write(stop_file, threshold)
-            return True
-        except Exception:
-            return False
+            _write_pair(_write_sysfs, stop_file, start_file)
+        except PermissionError:
+            import subprocess
+            def _pkexec_write(path, value):
+                subprocess.run(['pkexec', 'tee', str(path)],
+                               input=str(value).encode(), capture_output=True, check=True)
+            try:
+                _write_pair(_pkexec_write, stop_file, start_file)
+            except Exception as e:
+                errors.append(f"pkexec {stop_file.name}: {e}")
+        except OSError as e:
+            errors.append(f"{stop_file.name}: {e}")
+
+    if errors:
+        return False, "; ".join(errors)
+    return True, None
 
 
 def get_battery_info():
@@ -280,7 +286,7 @@ class EcoBattery:
                 hour, self.config["min_charge"], self.config["max_charge"], curve
             )
             demand = curve.get(hour, 50)
-            status_text = f"Grid demand: {demand}% → Charge to: {threshold}%"
+            status_text = f"Grid demand: {demand}% → Limit: {threshold}%"
             
             if threshold >= 90:
                 icon_name = "battery-full-charging"
@@ -298,13 +304,23 @@ class EcoBattery:
         # Update menu items
         self.status_item.set_label(status_text)
         
-        # Set threshold
-        set_charge_threshold(threshold)
+        # Set threshold and report any error in the status line
+        ok, err = set_charge_threshold(threshold)
+        if not ok:
+            status_text = f"Write error: {err}"
         
         # Update battery info
         level, bat_status, _ = get_battery_info()
         if level is not None:
-            self.battery_item.set_label(f"Battery: {level}% ({bat_status})")
+            if bat_status == "Not charging" and level > threshold:
+                charge_note = f"above limit, not charging"
+            elif bat_status == "Charging":
+                charge_note = f"charging to {threshold}%"
+            elif bat_status == "Discharging":
+                charge_note = f"discharging"
+            else:
+                charge_note = (bat_status or "unknown").lower()
+            self.battery_item.set_label(f"Battery: {level}% ({charge_note})")
     
     def _on_force_full(self, widget):
         self.force_full = not self.force_full

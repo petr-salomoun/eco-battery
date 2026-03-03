@@ -1,4 +1,6 @@
-# Allow users in plugdev group to control ThinkPad battery thresholds without sudo
+# Allow users in plugdev group to control battery thresholds without sudo.
+# Covers both the generic kernel interface and the Lenovo-specific interface.
+
 KERNEL=="BAT0", SUBSYSTEM=="power_supply", \
     ATTR{charge_control_end_threshold}=="*", \
     RUN+="/bin/chgrp plugdev $sys$devpath/charge_control_end_threshold", \
@@ -9,6 +11,16 @@ KERNEL=="BAT0", SUBSYSTEM=="power_supply", \
     RUN+="/bin/chgrp plugdev $sys$devpath/charge_control_start_threshold", \
     RUN+="/bin/chmod g+w $sys$devpath/charge_control_start_threshold"
 
+KERNEL=="BAT0", SUBSYSTEM=="power_supply", \
+    ATTR{charge_stop_threshold}=="*", \
+    RUN+="/bin/chgrp plugdev $sys$devpath/charge_stop_threshold", \
+    RUN+="/bin/chmod g+w $sys$devpath/charge_stop_threshold"
+
+KERNEL=="BAT0", SUBSYSTEM=="power_supply", \
+    ATTR{charge_start_threshold}=="*", \
+    RUN+="/bin/chgrp plugdev $sys$devpath/charge_start_threshold", \
+    RUN+="/bin/chmod g+w $sys$devpath/charge_start_threshold"
+
 KERNEL=="BAT1", SUBSYSTEM=="power_supply", \
     ATTR{charge_control_end_threshold}=="*", \
     RUN+="/bin/chgrp plugdev $sys$devpath/charge_control_end_threshold", \
@@ -18,3 +30,13 @@ KERNEL=="BAT1", SUBSYSTEM=="power_supply", \
     ATTR{charge_control_start_threshold}=="*", \
     RUN+="/bin/chgrp plugdev $sys$devpath/charge_control_start_threshold", \
     RUN+="/bin/chmod g+w $sys$devpath/charge_control_start_threshold"
+
+KERNEL=="BAT1", SUBSYSTEM=="power_supply", \
+    ATTR{charge_stop_threshold}=="*", \
+    RUN+="/bin/chgrp plugdev $sys$devpath/charge_stop_threshold", \
+    RUN+="/bin/chmod g+w $sys$devpath/charge_stop_threshold"
+
+KERNEL=="BAT1", SUBSYSTEM=="power_supply", \
+    ATTR{charge_start_threshold}=="*", \
+    RUN+="/bin/chgrp plugdev $sys$devpath/charge_start_threshold", \
+    RUN+="/bin/chmod g+w $sys$devpath/charge_start_threshold"
