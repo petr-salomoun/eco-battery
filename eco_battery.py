@@ -363,10 +363,31 @@ class EcoBattery:
         Gtk.main()
 
 
+def show_error_and_exit(message):
+    """Show a GTK error dialog and exit. Falls back to stderr if GTK is unavailable."""
+    try:
+        dialog = Gtk.MessageDialog(
+            message_type=Gtk.MessageType.ERROR,
+            buttons=Gtk.ButtonsType.CLOSE,
+            text="eco-battery: unsupported hardware",
+        )
+        dialog.format_secondary_text(message)
+        dialog.run()
+        dialog.destroy()
+    except Exception:
+        print(f"Error: {message}", file=__import__('sys').stderr)
+
+
 def main():
     if not get_battery_path():
-        print("Error: No compatible battery found.")
-        print("Make sure thinkpad_acpi is loaded: sudo modprobe thinkpad_acpi")
+        show_error_and_exit(
+            "No compatible battery found.\n\n"
+            "eco-battery requires a laptop with kernel support for\n"
+            "charge_control_end_threshold (e.g. ThinkPad via thinkpad_acpi,\n"
+            "or other laptops with a supported battery driver).\n\n"
+            "To check: ls /sys/class/power_supply/BAT*/charge_control_end_threshold\n\n"
+            "ThinkPad users: sudo modprobe thinkpad_acpi"
+        )
         return 1
     
     app = EcoBattery()

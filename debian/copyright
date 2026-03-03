@@ -1,6 +1,6 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: eco-battery
-Source: https://github.com/yourusername/eco-battery
+Source: https://github.com/petr-salomoun/eco-battery
 
 Files: *
 Copyright: 2026 Petr Salomoun

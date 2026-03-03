@@ -4,7 +4,7 @@ Release:        1%{?dist}
 Summary:        Smart battery charging based on grid demand
 
 License:        MIT
-URL:            https://github.com/yourusername/eco-battery
+URL:            https://github.com/petr-salomoun/eco-battery
 Source0:        %{name}-%{version}.tar.gz
 
 BuildArch:      noarch
@@ -15,9 +15,18 @@ Requires:       gtk3
 Requires:       libappindicator-gtk3
 
 %description
-eco-battery automatically adjusts ThinkPad battery charging thresholds
-inversely to electricity grid demand patterns. Charge more during off-peak,
-less during peak hours - helping balance the power grid.
+eco-battery automatically adjusts laptop battery charge thresholds in inverse
+proportion to electricity grid demand. It charges more during off-peak hours
+(night) when electricity is cheap and clean, and limits charging during peak
+demand (typically evening) when the grid is most stressed.
+
+This is a win-win: reduced CO2 emissions from avoided peaker plant use, and
+significantly extended battery lifespan - lithium-ion cells degrade much faster
+when kept at high state-of-charge.
+
+Requires kernel support for charge_control_end_threshold (e.g. ThinkPad via
+thinkpad_acpi, ASUS via asus-nb-wmi, or other supported drivers). The app
+detects unsupported hardware on startup and shows a clear error dialog.
 
 %prep
 %autosetup
@@ -42,7 +51,7 @@ udevadm trigger 2>/dev/null || :
 
 %changelog
 * Mon Mar 02 2026 Petr Salomoun <petr.salomoun@gmail.com> - 1.0.1-1
-- Renamed project from eco-battery to eco-battery
+- Renamed project from ecco-battery to eco-battery
 - Fix settings persistence: config directory updated to ~/.config/eco-battery
 
 * Sat Feb 28 2026 Petr Salomoun <petr.salomoun@gmail.com> - 1.0.0-1
