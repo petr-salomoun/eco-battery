@@ -35,10 +35,10 @@ from pathlib import Path
 # Fallback demand curve used only if curves.json cannot be loaded.
 # Based on a typical central European (AT/DE) weekday annual average.
 DEFAULT_CURVE = {
-    0: 34, 1: 30, 2: 27, 3: 26, 4: 27, 5: 33,
-    6: 48, 7: 68, 8: 83, 9: 88, 10: 87, 11: 85,
-    12: 82, 13: 80, 14: 79, 15: 81, 16: 86, 17: 93,
-    18: 100, 19: 96, 20: 86, 21: 72, 22: 55, 23: 41
+    0: 64, 1: 61, 2: 58, 3: 57, 4: 58, 5: 63,
+    6: 74, 7: 86, 8: 95, 9: 100, 10: 100, 11: 98,
+    12: 94, 13: 93, 14: 93, 15: 93, 16: 94, 17: 96,
+    18: 96, 19: 94, 20: 90, 21: 85, 22: 78, 23: 70
 }
 
 CONFIG_DIR = Path.home() / ".config" / "eco-battery"
