@@ -90,25 +90,13 @@ def get_battery_path():
     for bat in ["BAT0", "BAT1"]:
         path = Path(f"/sys/class/power_supply/{bat}")
         if (path / "charge_control_end_threshold").exists() or \
-           (path / "charge_stop_threshold").exists() or \
-           (path / "charge_behaviour").exists():
+           (path / "charge_stop_threshold").exists():
             return path
     return None
 
 
-def _has_behaviour_control(bat):
-    """True if this battery supports charge_behaviour (inhibit-charge mode)."""
-    f = bat / "charge_behaviour"
-    if not f.exists():
-        return False
-    try:
-        return "inhibit-charge" in f.read_text()
-    except Exception:
-        return False
-
-
 def _threshold_file_pairs(bat):
-    """Return list of (stop_file, start_file_or_None) pairs for threshold-based interfaces."""
+    """Return list of (stop_file, start_file_or_None) pairs for all interfaces on this battery."""
     pairs = []
     for stop_name, start_name in [
         ("charge_control_end_threshold", "charge_control_start_threshold"),
@@ -121,62 +109,48 @@ def _threshold_file_pairs(bat):
     return pairs
 
 
-def _write_sysfs(path, value):
-    with open(path, 'w') as f:
-        f.write(str(value))
-
-
-def _pkexec_write(path, value):
-    import subprocess
-    subprocess.run(['pkexec', 'tee', str(path)],
-                   input=str(value).encode(), capture_output=True, check=True)
-
-
-def _try_write(path, value):
-    """Write value to sysfs path, falling back to pkexec on PermissionError."""
-    try:
-        _write_sysfs(path, value)
-    except PermissionError:
-        _pkexec_write(path, value)
-
-
-def set_charge_threshold(threshold, current_level):
-    """Apply charging control. Uses charge_behaviour on supported hardware,
-    falls back to threshold sysfs files. Returns (success, error_message)."""
+def set_charge_threshold(threshold):
+    """Set battery charge threshold on all available interfaces. Returns (success, error_message)."""
     bat = get_battery_path()
     if not bat:
         return False, "no battery path"
 
-    errors = []
+    def _write_sysfs(path, value):
+        with open(path, 'w') as f:
+            f.write(str(value))
 
-    # --- charge_behaviour (DYTC / newer ThinkPads) ---
-    behaviour_file = bat / "charge_behaviour"
-    if _has_behaviour_control(bat):
-        # inhibit charging when battery is at or above threshold; resume when below
-        desired = "inhibit-charge" if current_level >= threshold else "auto"
-        try:
-            _try_write(behaviour_file, desired)
-        except Exception as e:
-            errors.append(f"charge_behaviour: {e}")
-
-    # --- threshold files (older ThinkPads, ASUS, others) ---
-    for stop_file, start_file in _threshold_file_pairs(bat):
+    def _write_pair(writer, stop_file, start_file):
         new_start = max(threshold - 5, 0)
-        try:
-            if start_file:
-                try:
-                    current_end = int(stop_file.read_text().strip())
-                except Exception:
-                    current_end = 100
-                if threshold < current_end:
-                    _try_write(start_file, new_start)
-                    _try_write(stop_file, threshold)
-                else:
-                    _try_write(stop_file, threshold)
-                    _try_write(start_file, new_start)
+        if start_file:
+            try:
+                current_end = int(stop_file.read_text().strip())
+            except Exception:
+                current_end = 100
+            if threshold < current_end:
+                # Lowering: decrease start first so it stays below the (not yet lowered) end
+                writer(start_file, new_start)
+                writer(stop_file, threshold)
             else:
-                _try_write(stop_file, threshold)
-        except Exception as e:
+                # Raising: increase end first so it stays above the (not yet raised) start
+                writer(stop_file, threshold)
+                writer(start_file, new_start)
+        else:
+            writer(stop_file, threshold)
+
+    errors = []
+    for stop_file, start_file in _threshold_file_pairs(bat):
+        try:
+            _write_pair(_write_sysfs, stop_file, start_file)
+        except PermissionError:
+            import subprocess
+            def _pkexec_write(path, value):
+                subprocess.run(['pkexec', 'tee', str(path)],
+                               input=str(value).encode(), capture_output=True, check=True)
+            try:
+                _write_pair(_pkexec_write, stop_file, start_file)
+            except Exception as e:
+                errors.append(f"pkexec {stop_file.name}: {e}")
+        except OSError as e:
             errors.append(f"{stop_file.name}: {e}")
 
     if errors:
@@ -323,33 +297,29 @@ class EcoBattery:
         
         # Update icon
         self._set_icon(icon_name)
-
+        
         if not self.use_appindicator:
             self.status_icon.set_tooltip_text(f"eco-battery: {status_text}")
-
+        
         # Update menu items
         self.status_item.set_label(status_text)
-
-        # Get battery info first so we can pass current level to set_charge_threshold
-        level, bat_status, _ = get_battery_info()
-
-        # Apply charging control and report any error in the status line
-        ok, err = set_charge_threshold(threshold, level if level is not None else 0)
+        
+        # Set threshold and report any error in the status line
+        ok, err = set_charge_threshold(threshold)
         if not ok:
             status_text = f"Write error: {err}"
-            self.status_item.set_label(status_text)
-
-        # Update battery info display
+        
+        # Update battery info
+        level, bat_status, _ = get_battery_info()
         if level is not None:
-            if bat_status in ("Not charging", "Full") and level >= threshold:
-                charge_note = "above limit, not charging"
+            if bat_status == "Not charging" and level > threshold:
+                charge_note = f"above limit, not charging"
             elif bat_status == "Charging":
                 charge_note = f"charging to {threshold}%"
             elif bat_status == "Discharging":
-                charge_note = "discharging"
+                charge_note = f"discharging"
             else:
                 charge_note = (bat_status or "unknown").lower()
-            self.battery_item.set_label(f"Battery: {level}% ({charge_note})")
             self.battery_item.set_label(f"Battery: {level}% ({charge_note})")
     
     def _on_force_full(self, widget):
