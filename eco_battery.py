@@ -90,7 +90,8 @@ def get_battery_path():
     for bat in ["BAT0", "BAT1"]:
         path = Path(f"/sys/class/power_supply/{bat}")
         if (path / "charge_control_end_threshold").exists() or \
-           (path / "charge_stop_threshold").exists():
+           (path / "charge_stop_threshold").exists() or \
+           (path / "charge_behaviour").exists():
             return path
     return None
 
@@ -109,53 +110,73 @@ def _threshold_file_pairs(bat):
     return pairs
 
 
+def _try_write(path, value):
+    """Write value to a sysfs file, falling back to pkexec on PermissionError."""
+    try:
+        with open(path, 'w') as f:
+            f.write(str(value))
+    except PermissionError:
+        import subprocess
+        subprocess.run(['pkexec', 'tee', str(path)],
+                       input=str(value).encode(), capture_output=True, check=True)
+
+
 def set_charge_threshold(threshold):
-    """Set battery charge threshold on all available interfaces. Returns (success, error_message)."""
+    """Write charge threshold to all available sysfs interfaces.
+
+    Uses a narrow 2 % start/end window (start = threshold - 2) which is
+    sufficient to let the EC re-engage charging after a brief discharge.
+    Returns (success, error_message).
+    """
     bat = get_battery_path()
     if not bat:
         return False, "no battery path"
 
-    def _write_sysfs(path, value):
-        with open(path, 'w') as f:
-            f.write(str(value))
-
-    def _write_pair(writer, stop_file, start_file):
-        new_start = max(threshold - 5, 0)
-        if start_file:
-            try:
-                current_end = int(stop_file.read_text().strip())
-            except Exception:
-                current_end = 100
-            if threshold < current_end:
-                # Lowering: decrease start first so it stays below the (not yet lowered) end
-                writer(start_file, new_start)
-                writer(stop_file, threshold)
-            else:
-                # Raising: increase end first so it stays above the (not yet raised) start
-                writer(stop_file, threshold)
-                writer(start_file, new_start)
-        else:
-            writer(stop_file, threshold)
-
     errors = []
     for stop_file, start_file in _threshold_file_pairs(bat):
+        new_start = max(threshold - 2, 0)
         try:
-            _write_pair(_write_sysfs, stop_file, start_file)
-        except PermissionError:
-            import subprocess
-            def _pkexec_write(path, value):
-                subprocess.run(['pkexec', 'tee', str(path)],
-                               input=str(value).encode(), capture_output=True, check=True)
-            try:
-                _write_pair(_pkexec_write, stop_file, start_file)
-            except Exception as e:
-                errors.append(f"pkexec {stop_file.name}: {e}")
-        except OSError as e:
+            if start_file:
+                try:
+                    current_end = int(stop_file.read_text().strip())
+                except Exception:
+                    current_end = 100
+                if threshold < current_end:
+                    # Lowering: decrease start first to keep start < end at all times
+                    _try_write(start_file, new_start)
+                    _try_write(stop_file, threshold)
+                else:
+                    # Raising: increase end first
+                    _try_write(stop_file, threshold)
+                    _try_write(start_file, new_start)
+            else:
+                _try_write(stop_file, threshold)
+        except Exception as e:
             errors.append(f"{stop_file.name}: {e}")
 
     if errors:
         return False, "; ".join(errors)
     return True, None
+
+
+def set_charge_behaviour(behaviour):
+    """Write to charge_behaviour sysfs file if present. behaviour is 'auto' or 'force-discharge'.
+
+    force-discharge: battery drains even on AC until explicitly set back to auto.
+    auto:            normal EC-controlled charging (respects threshold files).
+    Returns (success, error_message).
+    """
+    bat = get_battery_path()
+    if not bat:
+        return False, "no battery path"
+    f = bat / "charge_behaviour"
+    if not f.exists():
+        return False, "charge_behaviour not available"
+    try:
+        _try_write(f, behaviour)
+        return True, None
+    except Exception as e:
+        return False, str(e)
 
 
 def get_battery_info():
@@ -211,10 +232,10 @@ class EcoBattery:
             self.status_icon.connect("popup-menu", self._on_popup_menu)
             self.use_appindicator = False
         
-        # Pick a random offset within the hour so not all devices update simultaneously.
-        # The first _update() runs immediately; the hourly cycle starts after the offset.
-        offset = random.randint(0, 3599)
-        GLib.timeout_add_seconds(offset, self._start_hourly_cycle)
+        # _update() runs every minute so that force-discharge can be stopped
+        # promptly once the battery level drops to the threshold.
+        # The threshold recalculation itself is cheap and only changes hourly anyway.
+        GLib.timeout_add_seconds(60, self._tick)
         self._update()
     
     def _build_menu(self):
@@ -241,7 +262,7 @@ class EcoBattery:
         menu.append(Gtk.SeparatorMenuItem())
         
         quit_item = Gtk.MenuItem(label="Quit")
-        quit_item.connect("activate", lambda _: Gtk.main_quit())
+        quit_item.connect("activate", self._on_quit)
         menu.append(quit_item)
         
         menu.show_all()
@@ -260,23 +281,18 @@ class EcoBattery:
         else:
             self.status_icon.set_from_icon_name(icon_name)
     
-    def _start_hourly_cycle(self):
-        """Called once after the random startup offset; fires _update and starts the exact 1 h repeat."""
+    def _tick(self):
+        """Called every minute. Handles discharge monitoring and UI refresh."""
         self._update()
-        GLib.timeout_add_seconds(3600, self._hourly_tick)
-        return GLib.SOURCE_REMOVE  # one-shot
-
-    def _hourly_tick(self):
-        self._update()
-        return GLib.SOURCE_CONTINUE  # repeat every 3600 s
+        return GLib.SOURCE_CONTINUE
 
     def _update(self):
         hour = datetime.now().hour
         curve = self.curves.get(self.config["country"], DEFAULT_CURVE)
-        
+
         if isinstance(list(curve.keys())[0], str):
             curve = {int(k): v for k, v in curve.items()}
-        
+
         if self.force_full:
             threshold = 100
             status_text = "⚡ Force charging to 100%"
@@ -287,37 +303,58 @@ class EcoBattery:
             )
             demand = curve.get(hour, 50)
             status_text = f"Grid demand: {demand}% → Limit: {threshold}%"
-            
+
             if threshold >= 90:
                 icon_name = "battery-full-charging"
             elif threshold >= 70:
                 icon_name = "battery-good-charging"
             else:
                 icon_name = "battery-low-charging"
-        
-        # Update icon
+
+        # Update icon and status label
         self._set_icon(icon_name)
-        
         if not self.use_appindicator:
             self.status_icon.set_tooltip_text(f"eco-battery: {status_text}")
-        
-        # Update menu items
         self.status_item.set_label(status_text)
-        
-        # Set threshold and report any error in the status line
+
+        # Write threshold files
         ok, err = set_charge_threshold(threshold)
         if not ok:
-            status_text = f"Write error: {err}"
-        
-        # Update battery info
+            self.status_item.set_label(f"Write error: {err}")
+
+        # Read current battery state
         level, bat_status, _ = get_battery_info()
+
+        # Manage charge_behaviour for discharge control:
+        #   - If level is above the target threshold, force-discharge until it drops to threshold.
+        #   - Once at or below threshold, switch back to auto so normal charging can resume.
+        # This is a no-op on hardware that doesn't expose charge_behaviour.
         if level is not None:
-            if bat_status == "Not charging" and level > threshold:
-                charge_note = f"above limit, not charging"
+            bat = get_battery_path()
+            behaviour_file = bat / "charge_behaviour" if bat else None
+            if behaviour_file and behaviour_file.exists():
+                if level > threshold:
+                    set_charge_behaviour("force-discharge")
+                else:
+                    set_charge_behaviour("auto")
+
+        # Update battery info label
+        if level is not None:
+            bat = get_battery_path()
+            discharging_to_target = (
+                bat_status == "Discharging"
+                and bat is not None
+                and (bat / "charge_behaviour").exists()
+                and level > threshold
+            )
+            if discharging_to_target:
+                charge_note = f"discharging to {threshold}%"
+            elif bat_status == "Discharging":
+                charge_note = "discharging"
             elif bat_status == "Charging":
                 charge_note = f"charging to {threshold}%"
-            elif bat_status == "Discharging":
-                charge_note = f"discharging"
+            elif bat_status in ("Not charging", "Full") and level >= threshold:
+                charge_note = "at limit"
             else:
                 charge_note = (bat_status or "unknown").lower()
             self.battery_item.set_label(f"Battery: {level}% ({charge_note})")
@@ -375,7 +412,18 @@ class EcoBattery:
         
         dialog.destroy()
     
+    def _cleanup(self):
+        """Ensure force-discharge is never left active when the app exits."""
+        set_charge_behaviour("auto")
+
+    def _on_quit(self, widget=None):
+        self._cleanup()
+        Gtk.main_quit()
+
     def run(self):
+        import signal
+        # Handle SIGTERM (e.g. session logout, systemd stop) the same as a menu Quit.
+        GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGTERM, self._on_quit)
         Gtk.main()
 
 
