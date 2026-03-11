@@ -10,17 +10,26 @@ heavily on expensive and polluting peaker plants.
 
 eco-battery solves both problems at once:
 
-- **Before each demand peak** → charge to your maximum (e.g. 95%) — absorbing energy while the grid is relaxed
-- **At and around each demand peak** → discharge to your minimum (e.g. 40%) — reducing load exactly when the grid needs it most
-- **Between transitions** → hold at the current target; the EC maintains it via the charge threshold
+- **At each demand valley** → charge to your maximum (e.g. 95%) — but only once the valley is reached, not prematurely while demand is still falling toward it
+- **At each demand peak** → discharge to your minimum (e.g. 40%) — and keep discharging on the downslope while grid demand remains elevated
+- **Near-flat segments** → hold the current target; too little to gain from acting
 
-The scheduling algorithm looks ahead on the 24 h demand curve to find the next
-local maximum. Any hour where demand is more than 2 points below that upcoming
-peak is treated as a charge window; hours within 2 points of the peak are a
-discharge window. This means the battery is already full *before* the peak
-arrives and already empty *at* the peak — not proportionally somewhere in
-between. Double-hump profiles (e.g. FR, DE with morning and evening peaks) are
-handled naturally: each peak gets its own preceding charge window.
+The scheduling algorithm looks at the **slope** of the 24 h demand curve at each
+hour by finding the next local extremum ahead:
+
+- If the next turning point is a **peak** and demand has room to rise significantly
+  → charge now; the battery will be full when the peak arrives
+- If the next turning point is a **valley** and demand still has room to fall
+  → hold low; a cheaper charging slot is coming, or we are past a peak and
+  should keep discharging while demand is still elevated
+- If the next turning point is very close in value (within 2 demand units)
+  → near-flat slope, not worth acting; hold the previous target
+
+This means charging starts *at* the valley (not before it), discharging starts
+*at* the peak and continues naturally through the descent, and each charge/discharge
+event is precisely sized to the actual shape of the day's demand curve.
+Double-hump profiles (e.g. FR, DE with morning and evening peaks) are handled
+naturally: each peak gets its own valley-triggered charge window.
 
 The battery spends less time at high state-of-charge, which is the primary
 cause of lithium-ion degradation. eco-battery does this automatically, without

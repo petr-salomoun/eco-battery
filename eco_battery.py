@@ -193,52 +193,119 @@ def get_battery_info():
         return None, None, None
 
 
-def _next_peak_value(hour, curve):
-    """Return the demand value of the next local maximum on the 24-h circular curve.
+def _turning_points(curve):
+    """Return a list of (hour, kind) for every local extremum on the circular 24-h curve.
 
-    Searches forward from `hour` (wrapping) until the demand stops rising.
-    A 'local maximum' is the first hour where demand is higher than both its
-    neighbours on the circular curve.  If the curve is monotone (no peak found
-    in a full lap), the global maximum is returned as a fallback.
+    kind is 'max' or 'min'.  Flat plateaus are represented by the first hour
+    of the plateau only (the rest are skipped so they don't produce a spurious
+    second turning point of the same kind).
     """
-    # Search up to 24 hours ahead (full cycle).
-    for offset in range(1, 25):
-        h_prev = (hour + offset - 1) % 24
-        h_cur  = (hour + offset)     % 24
-        h_next = (hour + offset + 1) % 24
-        if curve[h_cur] >= curve[h_prev] and curve[h_cur] >= curve[h_next]:
-            return curve[h_cur]
-    # Fallback: global maximum
-    return max(curve.values())
+    points = []
+    prev = curve[23]
+    for h in range(24):
+        cur  = curve[h]
+        nxt  = curve[(h + 1) % 24]
+        # skip the interior of a plateau
+        if cur == prev:
+            prev = cur
+            continue
+        if cur >= prev and cur >= nxt:
+            points.append((h, 'max'))
+        elif cur <= prev and cur <= nxt:
+            points.append((h, 'min'))
+        prev = cur
+    return points
 
 
-def calculate_target(hour, min_charge, max_charge, curve, peak_margin=2):
+def _build_schedule(curve, min_charge, max_charge, margin=2):
+    """Compute the battery target for every hour of the day.
+
+    For each hour the algorithm looks forward on the circular 24-h demand
+    curve for the next local extremum:
+
+    - Next turning point is a **maximum** and the potential rise
+      (peak_value − current_demand) > margin:
+        → target = max_charge  (demand is climbing; charge now to be full at peak)
+
+    - Next turning point is a **minimum** and the potential fall
+      (current_demand − valley_value) > margin:
+        → target = min_charge  (demand is falling; wait — a cheaper slot is ahead,
+          or we are past a peak and should keep discharging while demand is still
+          elevated)
+
+    - Potential ≤ margin (near-flat segment):
+        → inherit the target of the previous hour (deadband — not worth acting
+          on a negligible slope)
+
+    The schedule is computed for all 24 hours in a single pass so that
+    "inherit from previous" is unambiguous.  The first hour's default (when
+    the very first hour falls in the deadband) is derived by scanning
+    backwards to find the last decisive hour, which ensures consistency on
+    a circular curve.
+
+    margin=2 (demand-curve units, 0-100 scale) is hardcoded.  It equals
+    ~5 % of the typical Central-European peak-to-trough swing and produces
+    sensible deadbands for all 15 bundled country profiles without needing
+    per-curve tuning.
+    """
+    tps = _turning_points(curve)
+    if not tps:
+        # Perfectly flat curve — nothing to do, stay at max
+        return {h: max_charge for h in range(24)}
+
+    # For each hour find the next turning point (circularly)
+    # by pre-building an offset lookup: next_tp[h] = (tp_value, tp_kind)
+    next_tp = {}
+    for h in range(24):
+        for offset in range(1, 25):
+            candidate_h = (h + offset) % 24
+            for tp_h, tp_kind in tps:
+                if tp_h == candidate_h:
+                    next_tp[h] = (curve[tp_h], tp_kind)
+                    break
+            if h in next_tp:
+                break
+
+    # First pass: compute decisive targets (ignoring deadband)
+    decisive = {}
+    for h in range(24):
+        tp_val, tp_kind = next_tp[h]
+        demand = curve[h]
+        if tp_kind == 'max':
+            potential = tp_val - demand
+            if potential > margin:
+                decisive[h] = max_charge
+        else:  # 'min'
+            potential = demand - tp_val
+            if potential > margin:
+                decisive[h] = min_charge
+
+    # Determine the default target for hours that fall in the deadband at the
+    # very start (h=0).  Scan backwards from h=23 to find the last decisive hour.
+    default_target = max_charge  # safe fallback
+    for h in range(23, -1, -1):
+        if h in decisive:
+            default_target = decisive[h]
+            break
+
+    # Second pass: fill in deadband hours by inheriting from the previous hour
+    schedule = {}
+    last = default_target
+    for h in range(24):
+        if h in decisive:
+            last = decisive[h]
+        schedule[h] = last
+    return schedule
+
+
+def calculate_target(hour, min_charge, max_charge, curve):
     """Return the battery target level for the given hour.
 
-    Rule:
-      - If current demand is more than `peak_margin` points below the next
-        upcoming peak, we are in a valley / rising shoulder → target max_charge
-        so the battery fills up before the peak arrives.
-      - Otherwise (within `peak_margin` of the upcoming peak, i.e. at or near
-        the peak) → target min_charge so the battery discharges and reduces
-        load exactly when the grid needs it most.
-
-    This produces a binary charge schedule anchored to actual peak timing
-    rather than a continuous proportional mapping, which means the battery
-    charges well before demand climbs and discharges right at the peak.
-    Double-hump profiles are handled naturally: each local peak has its own
-    preceding valley that qualifies as a charge window.
-
-    `peak_margin` (default 2) is expressed in the same 0-100 units as the
-    demand curve values.  It prevents adding charging load in the last hour(s)
-    before a peak tip when the battery should already be full.
+    Delegates to _build_schedule() which computes the full 24-h schedule
+    based on the slope of the demand curve relative to upcoming turning points.
     """
-    next_peak = _next_peak_value(hour, curve)
-    demand    = curve.get(hour, curve.get(str(hour), 50))
-    if demand <= next_peak - peak_margin:
-        return max_charge   # valley / approach → fill up
-    else:
-        return min_charge   # at or near peak → discharge / hold low
+    schedule = _build_schedule(curve, min_charge, max_charge)
+    return schedule[hour]
 
 
 class EcoBattery:
@@ -335,10 +402,8 @@ class EcoBattery:
                 hour, self.config["min_charge"], self.config["max_charge"], curve
             )
             demand = curve.get(hour, 50)
-            next_peak = _next_peak_value(hour, curve)
-            at_peak = demand > next_peak - 2
-            phase = "peak 📉" if at_peak else "valley 📈"
-            status_text = f"Grid demand: {demand}% ({phase}) → Target: {target}%"
+            phase = "discharging ↓" if target == self.config["min_charge"] else "charging ↑"
+            status_text = f"Grid demand: {demand}% → {phase} to {target}%"
 
             if target >= 90:
                 icon_name = "battery-full-charging"
