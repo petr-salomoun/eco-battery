@@ -67,7 +67,7 @@ def load_curves():
 
 def load_config():
     """Load user configuration."""
-    default = {"min_charge": 40, "max_charge": 100, "country": "AT"}
+    default = {"min_charge": 40, "max_charge": 95, "country": "AT"}
     if CONFIG_FILE.exists():
         try:
             with open(CONFIG_FILE) as f:
@@ -193,19 +193,52 @@ def get_battery_info():
         return None, None, None
 
 
-def calculate_threshold(hour, min_charge, max_charge, curve):
-    """Calculate charge threshold inversely proportional to demand."""
-    demand = curve.get(hour, curve.get(str(hour), 50))
-    min_demand = min(curve.values())
-    max_demand = max(curve.values())
-    
-    if max_demand == min_demand:
-        normalized = 0.5
+def _next_peak_value(hour, curve):
+    """Return the demand value of the next local maximum on the 24-h circular curve.
+
+    Searches forward from `hour` (wrapping) until the demand stops rising.
+    A 'local maximum' is the first hour where demand is higher than both its
+    neighbours on the circular curve.  If the curve is monotone (no peak found
+    in a full lap), the global maximum is returned as a fallback.
+    """
+    # Search up to 24 hours ahead (full cycle).
+    for offset in range(1, 25):
+        h_prev = (hour + offset - 1) % 24
+        h_cur  = (hour + offset)     % 24
+        h_next = (hour + offset + 1) % 24
+        if curve[h_cur] >= curve[h_prev] and curve[h_cur] >= curve[h_next]:
+            return curve[h_cur]
+    # Fallback: global maximum
+    return max(curve.values())
+
+
+def calculate_target(hour, min_charge, max_charge, curve, peak_margin=2):
+    """Return the battery target level for the given hour.
+
+    Rule:
+      - If current demand is more than `peak_margin` points below the next
+        upcoming peak, we are in a valley / rising shoulder → target max_charge
+        so the battery fills up before the peak arrives.
+      - Otherwise (within `peak_margin` of the upcoming peak, i.e. at or near
+        the peak) → target min_charge so the battery discharges and reduces
+        load exactly when the grid needs it most.
+
+    This produces a binary charge schedule anchored to actual peak timing
+    rather than a continuous proportional mapping, which means the battery
+    charges well before demand climbs and discharges right at the peak.
+    Double-hump profiles are handled naturally: each local peak has its own
+    preceding valley that qualifies as a charge window.
+
+    `peak_margin` (default 2) is expressed in the same 0-100 units as the
+    demand curve values.  It prevents adding charging load in the last hour(s)
+    before a peak tip when the battery should already be full.
+    """
+    next_peak = _next_peak_value(hour, curve)
+    demand    = curve.get(hour, curve.get(str(hour), 50))
+    if demand <= next_peak - peak_margin:
+        return max_charge   # valley / approach → fill up
     else:
-        normalized = (demand - min_demand) / (max_demand - min_demand)
-    
-    threshold = max_charge - int(normalized * (max_charge - min_charge))
-    return threshold
+        return min_charge   # at or near peak → discharge / hold low
 
 
 class EcoBattery:
@@ -294,19 +327,22 @@ class EcoBattery:
             curve = {int(k): v for k, v in curve.items()}
 
         if self.force_full:
-            threshold = 100
+            target = 100
             status_text = "⚡ Force charging to 100%"
             icon_name = "battery-full-charging"
         else:
-            threshold = calculate_threshold(
+            target = calculate_target(
                 hour, self.config["min_charge"], self.config["max_charge"], curve
             )
             demand = curve.get(hour, 50)
-            status_text = f"Grid demand: {demand}% → Limit: {threshold}%"
+            next_peak = _next_peak_value(hour, curve)
+            at_peak = demand > next_peak - 2
+            phase = "peak 📉" if at_peak else "valley 📈"
+            status_text = f"Grid demand: {demand}% ({phase}) → Target: {target}%"
 
-            if threshold >= 90:
+            if target >= 90:
                 icon_name = "battery-full-charging"
-            elif threshold >= 70:
+            elif target >= 70:
                 icon_name = "battery-good-charging"
             else:
                 icon_name = "battery-low-charging"
@@ -318,7 +354,7 @@ class EcoBattery:
         self.status_item.set_label(status_text)
 
         # Write threshold files
-        ok, err = set_charge_threshold(threshold)
+        ok, err = set_charge_threshold(target)
         if not ok:
             self.status_item.set_label(f"Write error: {err}")
 
@@ -326,14 +362,14 @@ class EcoBattery:
         level, bat_status, _ = get_battery_info()
 
         # Manage charge_behaviour for discharge control:
-        #   - If level is above the target threshold, force-discharge until it drops to threshold.
-        #   - Once at or below threshold, switch back to auto so normal charging can resume.
+        #   - If level is above the target, force-discharge until it drops to target.
+        #   - Once at or below target, switch back to auto so normal charging can resume.
         # This is a no-op on hardware that doesn't expose charge_behaviour.
         if level is not None:
             bat = get_battery_path()
             behaviour_file = bat / "charge_behaviour" if bat else None
             if behaviour_file and behaviour_file.exists():
-                if level > threshold:
+                if level > target:
                     set_charge_behaviour("force-discharge")
                 else:
                     set_charge_behaviour("auto")
@@ -345,15 +381,15 @@ class EcoBattery:
                 bat_status == "Discharging"
                 and bat is not None
                 and (bat / "charge_behaviour").exists()
-                and level > threshold
+                and level > target
             )
             if discharging_to_target:
-                charge_note = f"discharging to {threshold}%"
+                charge_note = f"discharging to {target}%"
             elif bat_status == "Discharging":
                 charge_note = "discharging"
             elif bat_status == "Charging":
-                charge_note = f"charging to {threshold}%"
-            elif bat_status in ("Not charging", "Full") and level >= threshold:
+                charge_note = f"charging to {target}%"
+            elif bat_status in ("Not charging", "Full") and level >= target:
                 charge_note = "at limit"
             else:
                 charge_note = (bat_status or "unknown").lower()

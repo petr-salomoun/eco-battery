@@ -10,13 +10,21 @@ heavily on expensive and polluting peaker plants.
 
 eco-battery solves both problems at once:
 
-- **Grid peak hours** → charge only to a low threshold (e.g. 40%) — reducing load when the grid needs it most
-- **Off-peak hours** (night) → charge to your maximum (e.g. 100%) — using cheap, low-carbon electricity
-- **Everything in between** → threshold is interpolated proportionally
+- **Before each demand peak** → charge to your maximum (e.g. 95%) — absorbing energy while the grid is relaxed
+- **At and around each demand peak** → discharge to your minimum (e.g. 40%) — reducing load exactly when the grid needs it most
+- **Between transitions** → hold at the current target; the EC maintains it via the charge threshold
 
-The result: your battery spends less time at high state-of-charge, which is the primary cause of
-lithium-ion degradation. Studies consistently show that keeping a battery below 80% significantly
-extends its cycle life. eco-battery does this automatically, without you having to think about it.
+The scheduling algorithm looks ahead on the 24 h demand curve to find the next
+local maximum. Any hour where demand is more than 2 points below that upcoming
+peak is treated as a charge window; hours within 2 points of the peak are a
+discharge window. This means the battery is already full *before* the peak
+arrives and already empty *at* the peak — not proportionally somewhere in
+between. Double-hump profiles (e.g. FR, DE with morning and evening peaks) are
+handled naturally: each peak gets its own preceding charge window.
+
+The battery spends less time at high state-of-charge, which is the primary
+cause of lithium-ion degradation. eco-battery does this automatically, without
+you having to think about it.
 
 **Win-win: fewer CO₂ emissions from the grid, longer battery lifespan.**
 
@@ -103,7 +111,7 @@ at startup so that not all devices hit the grid simultaneously.
 
 | Setting | Default | Description |
 |---|---|---|
-| Maximum charge | 100% | Charge limit during off-peak hours |
+| Maximum charge | 95% | Charge limit during off-peak / valley hours |
 | Minimum charge | 40% | Charge limit during peak demand hours |
 | Demand curve | AT | Country/region grid profile |
 
