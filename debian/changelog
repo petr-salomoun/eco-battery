@@ -1,3 +1,15 @@
+eco-battery (1.1.0-1) unstable; urgency=medium
+
+  * Slope-aware charge scheduling: charge at the valley, discharge at the
+    peak and through the descent; 2-unit deadband for near-flat segments
+  * Tray status shows next scheduled behaviour change with absolute time
+  * Real country grid demand profiles for all 15 bundled countries
+  * Active discharge via charge_behaviour (force-discharge / auto)
+  * Default max charge lowered to 95% to reduce time at high SoC
+  * Safe exit: force-discharge always cleared on quit or SIGTERM
+
+ -- Petr Salomoun <petr.salomoun@gmail.com>  Wed, 11 Mar 2026 12:00:00 +0100
+
 eco-battery (1.0.1-1) unstable; urgency=medium
 
   * Renamed project from ecco-battery to eco-battery

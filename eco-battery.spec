@@ -1,5 +1,5 @@
 Name:           eco-battery
-Version:        1.0.1
+Version:        1.1.0
 Release:        1%{?dist}
 Summary:        Smart battery charging based on grid demand
 
@@ -50,6 +50,14 @@ udevadm trigger 2>/dev/null || :
 /usr/lib/udev/rules.d/99-eco-battery.rules
 
 %changelog
+* Wed Mar 11 2026 Petr Salomoun <petr.salomoun@gmail.com> - 1.1.0-1
+- Slope-aware charge scheduling: charge at valley, discharge at peak and descent
+- Tray status shows next scheduled behaviour change with absolute time
+- Real country grid demand profiles for all 15 bundled countries
+- Active discharge via charge_behaviour (force-discharge / auto)
+- Default max charge lowered to 95%
+- Safe exit: force-discharge cleared on quit or SIGTERM
+
 * Mon Mar 02 2026 Petr Salomoun <petr.salomoun@gmail.com> - 1.0.1-1
 - Renamed project from ecco-battery to eco-battery
 - Fix settings persistence: config directory updated to ~/.config/eco-battery

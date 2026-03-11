@@ -308,6 +308,20 @@ def calculate_target(hour, min_charge, max_charge, curve):
     return schedule[hour]
 
 
+def _next_change(hour, schedule):
+    """Return (change_hour, new_target) for the next schedule transition after `hour`.
+
+    Searches forward circularly up to 23 hours.  Returns (None, None) when the
+    schedule is constant for the full day (no transition found).
+    """
+    current = schedule[hour]
+    for offset in range(1, 24):
+        h = (hour + offset) % 24
+        if schedule[h] != current:
+            return h, schedule[h]
+    return None, None
+
+
 class EcoBattery:
     """Main application."""
     
@@ -398,12 +412,19 @@ class EcoBattery:
             status_text = "⚡ Force charging to 100%"
             icon_name = "battery-full-charging"
         else:
-            target = calculate_target(
-                hour, self.config["min_charge"], self.config["max_charge"], curve
-            )
+            schedule = _build_schedule(curve, self.config["min_charge"], self.config["max_charge"])
+            target = schedule[hour]
             demand = curve.get(hour, 50)
             phase = "discharging ↓" if target == self.config["min_charge"] else "charging ↑"
-            status_text = f"Grid demand: {demand}% → {phase} to {target}%"
+
+            change_h, change_target = _next_change(hour, schedule)
+            if change_h is not None:
+                change_dir = "charge" if change_target == self.config["max_charge"] else "discharge"
+                next_str = f" · next: {change_dir} at {change_h:02d}:00"
+            else:
+                next_str = ""
+
+            status_text = f"Grid demand: {demand}% → {phase} to {target}%{next_str}"
 
             if target >= 90:
                 icon_name = "battery-full-charging"

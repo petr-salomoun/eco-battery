@@ -77,13 +77,13 @@ sudo modprobe thinkpad_acpi
 
 ### Debian/Ubuntu
 ```bash
-sudo dpkg -i eco-battery_1.0.1-1_all.deb
+sudo dpkg -i eco-battery_1.1.0-1_all.deb
 sudo apt-get install -f  # install missing dependencies if needed
 ```
 
 ### Fedora/RHEL
 ```bash
-sudo dnf install eco-battery-1.0.1-1.noarch.rpm
+sudo dnf install eco-battery-1.1.0-1.noarch.rpm
 ```
 
 ### Manual
