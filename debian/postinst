@@ -14,13 +14,16 @@ case "$1" in
             udevadm trigger --subsystem-match=power_supply 2>/dev/null || true
         fi
         
-        # Try to set permissions immediately
+        # Try to set permissions immediately (udev rules cover future reboots;
+        # this handles the running session without requiring a reboot).
         for bat in /sys/class/power_supply/BAT*; do
             if [ -d "$bat" ]; then
-                for threshold in charge_control_end_threshold charge_control_start_threshold; do
-                    if [ -f "$bat/$threshold" ]; then
-                        chgrp plugdev "$bat/$threshold" 2>/dev/null || true
-                        chmod g+w "$bat/$threshold" 2>/dev/null || true
+                for f in charge_control_end_threshold charge_control_start_threshold \
+                          charge_stop_threshold charge_start_threshold \
+                          charge_behaviour; do
+                    if [ -f "$bat/$f" ]; then
+                        chgrp plugdev "$bat/$f" 2>/dev/null || true
+                        chmod g+w "$bat/$f" 2>/dev/null || true
                     fi
                 done
             fi

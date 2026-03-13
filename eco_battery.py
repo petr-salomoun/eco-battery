@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 """
-eco-battery: Smart battery charging based on grid demand curves.
-Charges more when grid demand is low, less when demand is high.
+eco-battery: Smart battery charging scheduled around electricity grid demand.
+
+Charges at demand valleys, discharges at peaks, holds between transitions.
+Good for the grid, good for the battery.
 """
 
 import gi
+import signal
+import subprocess
 import warnings
 
 # Suppress deprecation warnings
@@ -116,7 +120,6 @@ def _try_write(path, value):
         with open(path, 'w') as f:
             f.write(str(value))
     except PermissionError:
-        import subprocess
         subprocess.run(['pkexec', 'tee', str(path)],
                        input=str(value).encode(), capture_output=True, check=True)
 
@@ -180,14 +183,23 @@ def set_charge_behaviour(behaviour):
 
 
 def get_battery_info():
-    """Get battery level and status."""
+    """Get battery level, status, and current charge threshold."""
     bat = get_battery_path()
     if not bat:
         return None, None, None
     try:
         level = int((bat / "capacity").read_text().strip())
         status = (bat / "status").read_text().strip()
-        threshold = int((bat / "charge_control_end_threshold").read_text().strip())
+        # Try both threshold file names used by different drivers
+        threshold = None
+        for name in ("charge_control_end_threshold", "charge_stop_threshold"):
+            f = bat / name
+            if f.exists():
+                try:
+                    threshold = int(f.read_text().strip())
+                    break
+                except Exception:
+                    pass
         return level, status, threshold
     except Exception:
         return None, None, None
@@ -324,12 +336,12 @@ def _next_change(hour, schedule):
 
 class EcoBattery:
     """Main application."""
-    
+
     def __init__(self):
         self.config = load_config()
         self.curves = load_curves()
         self.force_full = False
-        
+
         # Create indicator or status icon
         if HAS_APPINDICATOR:
             self.indicator = AppIndicator3.Indicator.new(
@@ -345,48 +357,48 @@ class EcoBattery:
             self.status_icon.set_tooltip_text("eco-battery")
             self.status_icon.connect("popup-menu", self._on_popup_menu)
             self.use_appindicator = False
-        
+
         # _update() runs every minute so that force-discharge can be stopped
         # promptly once the battery level drops to the threshold.
         # The threshold recalculation itself is cheap and only changes hourly anyway.
         GLib.timeout_add_seconds(60, self._tick)
         self._update()
-    
+
     def _build_menu(self):
         menu = Gtk.Menu()
-        
+
         self.status_item = Gtk.MenuItem(label="Status: --")
         self.status_item.set_sensitive(False)
         menu.append(self.status_item)
-        
+
         self.battery_item = Gtk.MenuItem(label="Battery: --")
         self.battery_item.set_sensitive(False)
         menu.append(self.battery_item)
-        
+
         menu.append(Gtk.SeparatorMenuItem())
-        
+
         self.force_item = Gtk.MenuItem(label="⚡ Charge to 100%")
         self.force_item.connect("activate", self._on_force_full)
         menu.append(self.force_item)
-        
+
         settings_item = Gtk.MenuItem(label="⚙️ Settings")
         settings_item.connect("activate", self._on_settings)
         menu.append(settings_item)
-        
+
         menu.append(Gtk.SeparatorMenuItem())
-        
+
         quit_item = Gtk.MenuItem(label="Quit")
         quit_item.connect("activate", self._on_quit)
         menu.append(quit_item)
-        
+
         menu.show_all()
         return menu
-    
+
     def _on_popup_menu(self, status_icon, button, activate_time):
         """For Gtk.StatusIcon fallback."""
         menu = self._build_menu()
         menu.popup(None, None, Gtk.StatusIcon.position_menu, status_icon, button, activate_time)
-    
+
     def _set_icon(self, icon_name):
         """Set icon - works for both AppIndicator and StatusIcon."""
         if self.use_appindicator:
@@ -394,7 +406,7 @@ class EcoBattery:
             self.indicator.set_icon_full(icon_name, "eco-battery")
         else:
             self.status_icon.set_from_icon_name(icon_name)
-    
+
     def _tick(self):
         """Called every minute. Handles discharge monitoring and UI refresh."""
         self._update()
@@ -451,10 +463,10 @@ class EcoBattery:
         #   - If level is above the target, force-discharge until it drops to target.
         #   - Once at or below target, switch back to auto so normal charging can resume.
         # This is a no-op on hardware that doesn't expose charge_behaviour.
-        if level is not None:
-            bat = get_battery_path()
-            behaviour_file = bat / "charge_behaviour" if bat else None
-            if behaviour_file and behaviour_file.exists():
+        bat = get_battery_path()
+        if level is not None and bat is not None:
+            behaviour_file = bat / "charge_behaviour"
+            if behaviour_file.exists():
                 if level > target:
                     set_charge_behaviour("force-discharge")
                 else:
@@ -462,7 +474,6 @@ class EcoBattery:
 
         # Update battery info label
         if level is not None:
-            bat = get_battery_path()
             discharging_to_target = (
                 bat_status == "Discharging"
                 and bat is not None
@@ -480,38 +491,38 @@ class EcoBattery:
             else:
                 charge_note = (bat_status or "unknown").lower()
             self.battery_item.set_label(f"Battery: {level}% ({charge_note})")
-    
+
     def _on_force_full(self, widget):
         self.force_full = not self.force_full
         self.force_item.set_label("✓ Charging to 100% (click to cancel)" if self.force_full else "⚡ Charge to 100%")
         self._update()
-    
+
     def _on_settings(self, widget):
         dialog = Gtk.Dialog(title="eco-battery Settings", flags=0)
         dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
                           Gtk.STOCK_OK, Gtk.ResponseType.OK)
         dialog.set_default_size(300, 150)
-        
+
         box = dialog.get_content_area()
         box.set_spacing(10)
         box.set_margin_start(15)
         box.set_margin_end(15)
         box.set_margin_top(15)
-        
+
         hbox1 = Gtk.Box(spacing=10)
         hbox1.pack_start(Gtk.Label(label="Maximum charge %:"), True, True, 0)
         max_spin = Gtk.SpinButton.new_with_range(60, 100, 5)
         max_spin.set_value(self.config["max_charge"])
         hbox1.pack_start(max_spin, False, False, 0)
         box.pack_start(hbox1, False, False, 0)
-        
+
         hbox2 = Gtk.Box(spacing=10)
         hbox2.pack_start(Gtk.Label(label="Minimum charge %:"), True, True, 0)
         min_spin = Gtk.SpinButton.new_with_range(20, 80, 5)
         min_spin.set_value(self.config["min_charge"])
         hbox2.pack_start(min_spin, False, False, 0)
         box.pack_start(hbox2, False, False, 0)
-        
+
         hbox3 = Gtk.Box(spacing=10)
         hbox3.pack_start(Gtk.Label(label="Demand curve:"), True, True, 0)
         country_combo = Gtk.ComboBoxText()
@@ -522,18 +533,18 @@ class EcoBattery:
             country_combo.set_active(0)
         hbox3.pack_start(country_combo, False, False, 0)
         box.pack_start(hbox3, False, False, 0)
-        
+
         dialog.show_all()
-        
+
         if dialog.run() == Gtk.ResponseType.OK:
             self.config["min_charge"] = int(min_spin.get_value())
             self.config["max_charge"] = int(max_spin.get_value())
             self.config["country"] = country_combo.get_active_text() or "default"
             save_config(self.config)
             self._update()
-        
+
         dialog.destroy()
-    
+
     def _cleanup(self):
         """Ensure force-discharge is never left active when the app exits."""
         set_charge_behaviour("auto")
@@ -543,7 +554,6 @@ class EcoBattery:
         Gtk.main_quit()
 
     def run(self):
-        import signal
         # Handle SIGTERM (e.g. session logout, systemd stop) the same as a menu Quit.
         GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGTERM, self._on_quit)
         Gtk.main()
@@ -575,7 +585,7 @@ def main():
             "ThinkPad users: sudo modprobe thinkpad_acpi"
         )
         return 1
-    
+
     app = EcoBattery()
     app.run()
     return 0

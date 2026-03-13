@@ -109,12 +109,9 @@ sudo usermod -aG plugdev $USER
 The app starts automatically on login. Look for the battery icon in your system tray.
 
 **Tray menu:**
-- Current grid demand and charge threshold
+- Current grid demand, current phase (charging/discharging), and next scheduled change time
 - **⚡ Charge to 100%** — one-click override when you need a full battery
 - **⚙️ Settings** — adjust thresholds and demand curve
-
-The threshold is updated once per hour. Each instance picks a random minute within the hour
-at startup so that not all devices hit the grid simultaneously.
 
 ## Settings
 

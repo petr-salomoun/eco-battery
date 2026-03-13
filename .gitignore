@@ -1,0 +1,11 @@
+# dpkg-buildpackage outputs
+debian/.debhelper/
+debian/debhelper-build-stamp
+debian/eco-battery.substvars
+debian/eco-battery/
+debian/files
+*.deb
+*.rpm
+*.tar.gz
+*.buildinfo
+*.changes

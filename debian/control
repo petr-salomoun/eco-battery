@@ -13,17 +13,17 @@ Depends: ${misc:Depends},
  python3-gi,
  gir1.2-gtk-3.0,
  gir1.2-ayatanaappindicator3-0.1
-Description: Smart battery charging based on grid demand
- eco-battery automatically adjusts laptop battery charge thresholds
- in inverse proportion to electricity grid demand. It charges more
- during off-peak hours (night) when electricity is cheap and clean,
- and limits charging during peak demand periods (typically evening)
- when the grid is most stressed.
+Description: Smart battery charging scheduled around grid demand
+ eco-battery adjusts laptop battery charging based on electricity grid
+ demand curves. It charges at demand valleys (cheap, low-carbon electricity)
+ and discharges at demand peaks (expensive peaker plants), reducing grid
+ stress exactly when it matters most.
  .
  This is a win-win: reduced CO2 emissions from avoided peaker plant use,
  and significantly extended battery lifespan - lithium-ion cells degrade
  much faster when kept at high state-of-charge.
  .
- Requires kernel support for charge_control_end_threshold (e.g. ThinkPad
- via thinkpad_acpi, ASUS via asus-nb-wmi, or other supported drivers).
- The app detects unsupported hardware on startup and shows a clear error.
+ Requires kernel support for battery charge threshold control or
+ charge_behaviour (e.g. ThinkPad via thinkpad_acpi, ASUS via asus-nb-wmi,
+ or other supported drivers). The app detects unsupported hardware on
+ startup and shows a clear error.
