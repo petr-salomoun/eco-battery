@@ -112,6 +112,8 @@ The app starts automatically on login. Look for the battery icon in your system 
 - Current grid demand, current phase (charging/discharging), and next scheduled change time
 - **⚡ Charge to 100%** — one-click override when you need a full battery
 - **⚙️ Settings** — adjust thresholds and demand curve
+- **Manual mode** (checkbox) — toggle manual checkpoint scheduling on/off
+- **Manual mode settings…** — configure daily checkpoints
 
 ## Settings
 
@@ -124,6 +126,34 @@ The app starts automatically on login. Look for the battery icon in your system 
 Available demand curves: AT, AU, BR, CA, CZ, DE, ES, FR, GB, IN, IT, JP, PL, SK, US.
 
 Settings are saved to `~/.config/eco-battery/config.json`.
+
+## Manual mode
+
+Manual mode replaces the automatic demand-curve schedule with a set of **daily checkpoints**
+that you define yourself. Each checkpoint has a **time** (HH:MM) and a **target battery %**.
+
+The battery is held at the active checkpoint's target until the next checkpoint's time arrives.
+Checkpoints cycle daily and wrap around midnight.
+
+**Example:**
+
+| Time  | Target | Effect |
+|-------|--------|--------|
+| 07:00 | 80%    | Charges to 80% from 07:00 until noon |
+| 12:00 | 60%    | Drops to 60% midday (if hardware supports discharge) |
+| 22:00 | 90%    | Charges to 90% overnight |
+
+If the current time is before the first checkpoint of the day, the last checkpoint's target
+carries over from the previous day.
+
+**Configuring checkpoints:**
+1. Open **Manual mode settings…** from the tray menu
+2. Click **+ Add checkpoint** to add rows; edit the time (HH:MM) and target % inline
+3. Click **− Remove selected** to delete a row
+4. Click **OK** to save — checkpoints are automatically sorted by time
+
+Enable **Manual mode** from the tray checkbox to activate the checkpoint schedule.
+Disable it to return to automatic demand-curve scheduling at any time.
 
 ## Building packages
 

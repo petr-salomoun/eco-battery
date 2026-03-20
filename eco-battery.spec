@@ -1,5 +1,5 @@
 Name:           eco-battery
-Version:        1.1.0
+Version:        1.2.0
 Release:        1%{?dist}
 Summary:        Smart battery charging based on grid demand
 
@@ -50,6 +50,16 @@ udevadm trigger 2>/dev/null || :
 /usr/lib/udev/rules.d/99-eco-battery.rules
 
 %changelog
+* Fri Mar 20 2026 Petr Salomoun <petr.salomoun@gmail.com> - 1.2.0-1
+- Manual mode: user-defined daily checkpoints (HH:MM + target %) override
+  the automatic demand-curve schedule
+- Checkpoint editor dialog: inline-editable TreeView with add/remove buttons,
+  drag-to-reorder, spin-based target % input, and HH:MM validation
+- Manual mode toggle (CheckMenuItem) in tray menu; persisted in config.json
+- Tray status line shows active checkpoint and next upcoming checkpoint
+- Checkpoints sort by time and wrap circularly around midnight
+- Backward-compatible config defaults (manual_mode=false, checkpoints=[])
+
 * Wed Mar 11 2026 Petr Salomoun <petr.salomoun@gmail.com> - 1.1.0-1
 - Slope-aware charge scheduling: charge at valley, discharge at peak and descent
 - Tray status shows next scheduled behaviour change with absolute time
